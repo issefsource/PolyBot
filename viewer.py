@@ -2,11 +2,16 @@ from flask import Flask, render_template_string
 import requests
 from datetime import datetime, timezone
 import pytz
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
 
 # 🔔 TELEGRAM FUNCTION
 def send_telegram(message):
-    token = "8717498794:AAEvZPgqF2Vko2-_A3dRsbvUhXpabFt-T0I"   # ⚠️ replace this
-    chat_id = "5042086050"
+    token = os.getenv("TELEGRAM_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
 
