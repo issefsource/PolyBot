@@ -1,4 +1,5 @@
 from flask import Flask, render_template_string
+import threading
 import requests
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
@@ -8,12 +9,58 @@ load_dotenv(override=True)
 
 def send_telegram(message):
     token = os.getenv("TELEGRAM_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    try:
-        requests.post(url, json={"chat_id": chat_id, "text": message}, timeout=5)
-    except Exception as e:
-        print(f"Telegram error: {e}")
+    for chat_id in list(subscribers):
+        try:
+            requests.post(url, json={"chat_id": chat_id, "text": message}, timeout=5)
+        except Exception as e:
+            print(f"Telegram error for {chat_id}: {e}")
+
+
+def poll_telegram():
+    """Background thread: listens for /start messages and registers subscribers."""
+    token = os.getenv("TELEGRAM_TOKEN")
+    url = f"https://api.telegram.org/bot{token}"
+    offset = None
+    print("Telegram polling started...")
+    while True:
+        try:
+            params = {"timeout": 30, "allowed_updates": ["message"]}
+            if offset:
+                params["offset"] = offset
+            res = requests.get(f"{url}/getUpdates", params=params, timeout=35)
+            updates = res.json().get("result", [])
+            for update in updates:
+                offset = update["update_id"] + 1
+                msg = update.get("message", {})
+                text = msg.get("text", "")
+                chat_id = msg.get("chat", {}).get("id")
+                first_name = msg.get("chat", {}).get("first_name", "there")
+                if chat_id and text.strip() == "/start":
+                    if chat_id not in subscribers:
+                        subscribers.add(chat_id)
+                        save_subscribers()
+                        print(f"New subscriber: {chat_id} ({first_name})")
+                        requests.post(f"{url}/sendMessage", json={
+                            "chat_id": chat_id,
+                            "text": f"👋 Hey {first_name}! You're now subscribed to trade alerts. You'll get notified every time a new trade is detected."
+                        }, timeout=5)
+                    else:
+                        requests.post(f"{url}/sendMessage", json={
+                            "chat_id": chat_id,
+                            "text": "✅ You're already subscribed!"
+                        }, timeout=5)
+                elif chat_id and text.strip() == "/stop":
+                    subscribers.discard(chat_id)
+                    save_subscribers()
+                    print(f"Unsubscribed: {chat_id}")
+                    requests.post(f"{url}/sendMessage", json={
+                        "chat_id": chat_id,
+                        "text": "🔕 You've been unsubscribed. Send /start to resubscribe."
+                    }, timeout=5)
+        except Exception as e:
+            print(f"Polling error: {e}")
+            import time; time.sleep(5)
 
 
 app = Flask(__name__)
@@ -21,6 +68,29 @@ app = Flask(__name__)
 wallet = "0x2a2c53bd278c04da9962fcf96490e17f3dfb9bc1"
 seen_trades = set()
 cet = timezone(timedelta(hours=1))  # Fixed CET = UTC+1, no DST
+
+# Subscribers: everyone who sent /start to the bot
+SUBSCRIBERS_FILE = "subscribers.txt"
+
+def load_subscribers():
+    s = set()
+    if os.getenv("TELEGRAM_CHAT_ID"):
+        s.add(int(os.getenv("TELEGRAM_CHAT_ID")))
+    if os.path.exists(SUBSCRIBERS_FILE):
+        with open(SUBSCRIBERS_FILE, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line.isdigit():
+                    s.add(int(line))
+    return s
+
+def save_subscribers():
+    with open(SUBSCRIBERS_FILE, "w") as f:
+        for chat_id in subscribers:
+            f.write(str(chat_id) + "\n")
+
+subscribers = load_subscribers()
+print(f"Loaded {len(subscribers)} subscriber(s)")
 
 HTML = """
 <!DOCTYPE html>
@@ -230,4 +300,9 @@ def home():
 
 
 print("TOKEN:", os.getenv("TELEGRAM_TOKEN"))
-app.run(debug=True)
+
+# Start Telegram polling in background thread
+t = threading.Thread(target=poll_telegram, daemon=True)
+t.start()
+
+app.run(debug=True, use_reloader=False)  # use_reloader=False prevents double thread on reload
