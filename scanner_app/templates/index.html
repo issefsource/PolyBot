@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Polymarket Insider Scanner</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/scanner.css">
+</head>
+<body>
+<div class="scanlines"></div>
+<header>
+  <div>
+    <div class="logo">POLY&#9672;SCANNER</div>
+    <div class="subtitle">Insider Pattern Detection Engine</div>
+  </div>
+  <div class="header-right">
+    <div>Source: <b>data-api.polymarket.com</b></div>
+    <div id="last-scan">Last scan: &mdash;</div>
+  </div>
+</header>
+<div class="progress-bar"><div class="progress-inner" id="progress"></div></div>
+<div class="controls">
+  <button class="filter-btn active" onclick="setFilter('all', this)">ALL</button>
+  <button class="filter-btn" onclick="setFilter('Politics', this)">POLITICS</button>
+  <button class="filter-btn" onclick="setFilter('Crypto', this)">CRYPTO</button>
+  <button class="filter-btn" onclick="setFilter('Macro', this)">MACRO</button>
+  <button class="filter-btn" onclick="setFilter('Sports', this)">SPORTS</button>
+  <button class="scan-btn" id="scan-btn" onclick="startScan()">SCAN</button>
+</div>
+<div class="status-bar">
+  <span class="dot" id="status-dot"></span>
+  <span id="status-text">Ready. Click SCAN to analyze the leaderboard.</span>
+</div>
+<div class="grid-header">
+  <div>#</div><div>WALLET</div><div>AVG SIZE</div><div>TRADES</div>
+  <div>EARLY SCORE</div><div>CATEGORY</div><div>SIGNALS</div><div>INSIDER SCORE</div>
+</div>
+<div id="results">
+  <div class="empty-state">
+    <div class="big">&#128269;</div>
+    <div>No scan results yet.</div>
+    <div>Click <b>SCAN</b> to fetch the leaderboard and analyze wallets.</div>
+  </div>
+</div>
+<script src="/static/scanner.js"></script>
+</body>
+</html>
