@@ -2,6 +2,7 @@ from flask import Flask, Response, render_template
 import requests
 import time
 import json
+from datetime import datetime, timezone
 
 app = Flask(__name__)
 
@@ -12,8 +13,6 @@ CATEGORIES = {
                  "defi", "nft", "blockchain", "binance", "coinbase", "doge", "xrp"],
     "Macro":    ["gdp", "inflation", "recession", "fed", "ecb", "unemployment", "cpi", "ppi",
                  "interest", "rate cut", "rate hike", "economic", "oil", "gold", "s&p", "nasdaq"],
-    "Sports":   ["nba", "nfl", "mlb", "nhl", "soccer", "football", "basketball", "baseball",
-                 "tennis", "golf", "super bowl", "world cup", "champion", "playoffs", "vs"],
 }
 
 def detect_category(title):
@@ -26,7 +25,69 @@ def detect_category(title):
     best = max(scores, key=scores.get)
     return best if scores[best] > 0 else "Other"
 
-def score_wallet(address, trades, username, pnl, vol):
+
+def fetch_open_positions(address):
+    """
+    Fetch a wallet's current open positions.
+    Returns a list of position dicts. We use these to compute unrealised PnL
+    so that traders who closed winners but are sitting on open losers get
+    accurately penalised in win_pct.
+    """
+    try:
+        r = requests.get(
+            "https://data-api.polymarket.com/positions",
+            params={"user": address, "sizeThreshold": "0.01"},
+            timeout=5
+        )
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        if isinstance(data, list):
+            return data
+        return data.get("data", [])
+    except Exception as e:
+        print(f"Open positions fetch error for {address}: {e}")
+        return []
+
+
+def compute_win_pct(pnl, vol, open_positions):
+    """
+    Compute a realistic win percentage that factors in open (unrealised) positions.
+
+    - Start from the realised PnL.
+    - For each open position compute unrealised PnL = currentValue - costBasis.
+    - Add unrealised PnL to realised PnL so losers held open drag the metric down.
+    - Normalise against total volume traded.
+    """
+    vol_float = float(vol or 0)
+    pnl_float = float(pnl or 0)
+
+    unrealised_pnl = 0.0
+    for pos in open_positions:
+        try:
+            cur_val    = float(pos.get("currentValue") or pos.get("value") or 0)
+            avg_price  = float(pos.get("avgPrice") or pos.get("averagePrice") or 0)
+            size       = float(pos.get("size") or pos.get("shares") or 0)
+            cost_basis = float(pos.get("initialValue") or pos.get("cashInvested") or 0)
+
+            if cost_basis == 0 and avg_price > 0 and size > 0:
+                cost_basis = avg_price * size
+
+            if cost_basis > 0:
+                unrealised_pnl += cur_val - cost_basis
+        except Exception:
+            continue
+
+    adjusted_pnl = pnl_float + unrealised_pnl
+
+    if vol_float <= 0:
+        return 0.0
+
+    win_pct = min(max((adjusted_pnl / vol_float) * 1000, 0), 100)
+    return round(win_pct, 1)
+
+
+def score_wallet(address, trades, username, pnl, vol, open_positions):
     if not trades:
         return None
 
@@ -54,6 +115,27 @@ def score_wallet(address, trades, username, pnl, vol):
     size_score = min(avg_size / 5000, 1.0)
     insider_score = round((size_score * 40 + early_score * 30 + repeat_score * 30) * 100, 1)
 
+    win_pct = compute_win_pct(pnl, vol, open_positions)
+
+    # Tally open positions by direction for the UI badge
+    open_losing = 0
+    open_winning = 0
+    for pos in open_positions:
+        try:
+            cur_val    = float(pos.get("currentValue") or pos.get("value") or 0)
+            avg_price2 = float(pos.get("avgPrice") or pos.get("averagePrice") or 0)
+            size2      = float(pos.get("size") or pos.get("shares") or 0)
+            cost_basis = float(pos.get("initialValue") or pos.get("cashInvested") or 0)
+            if cost_basis == 0 and avg_price2 > 0 and size2 > 0:
+                cost_basis = avg_price2 * size2
+            if cost_basis > 0:
+                if cur_val < cost_basis:
+                    open_losing += 1
+                else:
+                    open_winning += 1
+        except Exception:
+            continue
+
     signals = []
     if avg_size > 500:
         signals.append("Large positions")
@@ -63,6 +145,8 @@ def score_wallet(address, trades, username, pnl, vol):
         signals.append("Repeated behavior")
     if dominance_ratio > 0.5:
         signals.append(dominant_cat + " specialist")
+    if open_losing > 2:
+        signals.append(f"{open_losing} losing open pos")
 
     return {
         "address": address,
@@ -77,41 +161,35 @@ def score_wallet(address, trades, username, pnl, vol):
         "repeat_score": round(repeat_score * 100, 1),
         "early_score": round(early_score * 100, 1),
         "insider_score": insider_score,
+        "win_pct": win_pct,
+        "open_losing": open_losing,
+        "open_winning": open_winning,
         "signals": signals,
     }
 
 def fetch_leaderboard():
-    """Try multiple known leaderboard endpoint variants."""
+    url = "https://data-api.polymarket.com/v1/leaderboard"
     attempts = [
-        ("https://data-api.polymarket.com/leaderboard", {"period": "month", "limit": 100}),
-        ("https://data-api.polymarket.com/leaderboard", {"period": "week",  "limit": 100}),
-        ("https://data-api.polymarket.com/leaderboard", {"period": "all",   "limit": 100}),
-        ("https://data-api.polymarket.com/leaderboard", {"limit": 100}),
+        {"timePeriod": "ALL", "limit": 50},
+        {"timePeriod": "MONTH", "limit": 50},
+        {"timePeriod": "WEEK", "limit": 50},
     ]
-    for url, params in attempts:
+    for params in attempts:
         try:
             res = requests.get(url, params=params, timeout=10)
-            print(f"Leaderboard {params}: status={res.status_code} body={res.text[:300]}")
-            if res.status_code != 200:
-                continue
-            data = res.json()
-            if isinstance(data, list) and len(data) > 0:
-                return data
-            if isinstance(data, dict):
-                for key in ["data", "leaderboard", "traders", "results"]:
-                    if key in data and isinstance(data[key], list) and len(data[key]) > 0:
-                        return data[key]
+            if res.status_code == 200:
+                data = res.json()
+                if isinstance(data, list) and len(data) > 0:
+                    return data
         except Exception as e:
             print(f"Leaderboard attempt error: {e}")
     return []
 
 
 def fetch_wallets_from_trades():
-    """Fallback: collect unique wallets from recent high-volume market trades."""
     print("Falling back to scraping wallets from recent trades...")
     wallets = {}
     try:
-        # Get top active markets
         res = requests.get(
             "https://gamma-api.polymarket.com/markets",
             params={"active": "true", "closed": "false", "limit": 10,
@@ -147,7 +225,6 @@ def fetch_wallets_from_trades():
     except Exception as e:
         print(f"Markets fetch error: {e}")
 
-    # Sort by volume and return as leader-like dicts
     sorted_wallets = sorted(wallets.items(), key=lambda x: x[1], reverse=True)
     return [{"proxyWallet": w, "userName": "", "pnl": 0, "vol": v}
             for w, v in sorted_wallets[:40]]
@@ -172,6 +249,9 @@ def stream_scan():
     leaders = leaders[:40]
     yield emit({"type": "progress", "text": "Found " + str(len(leaders)) + " traders. Analyzing...", "pct": 10})
 
+    now = datetime.now(timezone.utc)
+    current_month_start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+
     analyzed = 0
     for i, leader in enumerate(leaders):
         address = leader.get("proxyWallet", "")
@@ -195,14 +275,36 @@ def stream_scan():
             trades = [t for t in trades if
                       t.get("type", "").upper() in ("BUY", "SELL", "TRADE") or
                       t.get("side") in ("BUY", "SELL")]
+
+            is_active_this_month = False
+            for t in trades:
+                timestamp = t.get("timestamp")
+                if timestamp:
+                    try:
+                        if isinstance(timestamp, str):
+                            dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                        else:
+                            dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+                        if dt >= current_month_start:
+                            is_active_this_month = True
+                            break
+                    except Exception:
+                        continue
+
+            if not is_active_this_month:
+                continue
+
+            # Fetch open positions to compute accurate win %
+            open_positions = fetch_open_positions(address)
+
+            if len(trades) >= 3:
+                result = score_wallet(address, trades, username, pnl, vol, open_positions)
+                if result and result["insider_score"] > 5:
+                    yield emit({"type": "result", "data": result})
+                    analyzed += 1
+
         except Exception:
             trades = []
-
-        if len(trades) >= 3:
-            result = score_wallet(address, trades, username, pnl, vol)
-            if result and result["insider_score"] > 5:
-                yield emit({"type": "result", "data": result})
-                analyzed += 1
 
         time.sleep(0.15)
 

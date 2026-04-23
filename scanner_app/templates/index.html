@@ -25,16 +25,21 @@
   <button class="filter-btn" onclick="setFilter('Politics', this)">POLITICS</button>
   <button class="filter-btn" onclick="setFilter('Crypto', this)">CRYPTO</button>
   <button class="filter-btn" onclick="setFilter('Macro', this)">MACRO</button>
-  <button class="filter-btn" onclick="setFilter('Sports', this)">SPORTS</button>
   <button class="scan-btn" id="scan-btn" onclick="startScan()">SCAN</button>
 </div>
 <div class="status-bar">
   <span class="dot" id="status-dot"></span>
   <span id="status-text">Ready. Click SCAN to analyze the leaderboard.</span>
 </div>
-<div class="grid-header">
-  <div>#</div><div>WALLET</div><div>AVG SIZE</div><div>TRADES</div>
-  <div>EARLY SCORE</div><div>CATEGORY</div><div>SIGNALS</div><div>INSIDER SCORE</div>
+<div class="grid-header col-grid">
+  <div data-sort="rank"             onclick="setSort('rank', this)">#<span class="sort-arrow"></span></div>
+  <div data-sort="username"         onclick="setSort('username', this)">WALLET<span class="sort-arrow"></span></div>
+  <div data-sort="avg_size"         onclick="setSort('avg_size', this)">AVG SIZE<span class="sort-arrow"></span></div>
+  <div data-sort="trade_count"      onclick="setSort('trade_count', this)">TRADES<span class="sort-arrow"></span></div>
+  <div data-sort="win_pct"          onclick="setSort('win_pct', this)">WIN %<span class="sort-arrow"></span></div>
+  <div data-sort="early_score"      onclick="setSort('early_score', this)">EARLY<span class="sort-arrow"></span></div>
+  <div data-sort="dominant_category" onclick="setSort('dominant_category', this)">CATEGORY<span class="sort-arrow"></span></div>
+  <div data-sort="insider_score"    onclick="setSort('insider_score', this)">INSIDER SCORE<span class="sort-arrow"></span></div>
 </div>
 <div id="results">
   <div class="empty-state">
